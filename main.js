@@ -106,13 +106,12 @@ const map = new Map({
 });
 
 function setupChallengeProjection(def, worldExtent) {
-    proj4.defs("challenge", def);
+    proj4.defs(def, def);
     ol.proj.proj4.register(proj4);
-    const challengeProjection =  ol.proj.get("challenge");
-    challengeProjection.setWorldExtent(worldExtent);
-    const fromLonLat = ol.proj.getTransform('EPSG:4326', challengeProjection);
-    const extent = ol.extent.applyTransform(worldExtent, fromLonLat, undefined, 8);
-    challengeProjection.setExtent(extent);
+    const challengeProjection =  ol.proj.get(def);
+    if (worldExtent) {
+        challengeProjection.setWorldExtent(worldExtent);
+    }
     return challengeProjection;
 }
 
@@ -152,6 +151,13 @@ async function restart() {
         geojson.properties.name = url;
     }
     
+    let challengeProjection;
+    if (geojson.properties.projection && geojson.properties.extent) {
+        challengeProjection = setupChallengeProjection(geojson.properties.projection, geojson.properties.extent);
+    } else {
+        challengeProjection = ol.proj.get('EPSG:4326');
+    }
+    
     console.log(`${geojson.properties.name} has ${geojson.features.length} challenges.`);
     let regionFilter = undefined;
     if (region !== '') {
@@ -162,29 +168,41 @@ async function restart() {
         });
     }
     geojson.features = geojson.features.filter(f => getName(f.properties));
+    
+    const featuresExtent = ol.extent.createEmpty();
+    geojson.features.forEach(f => {
+        const featureGeometry = geoJsonReader.readGeometry(f.geometry);
+        featureGeometry.transform('EPSG:4326', challengeProjection);
+        ol.extent.extend(featuresExtent, featureGeometry.getExtent())
+    });
+    
     shuffleArray(geojson.features);
     geojson.features.length = Math.min(questions, geojson.features.length);
     
-    let challengeProjection;
-    if (geojson.properties.projection && geojson.properties.extent) {
-        challengeProjection = setupChallengeProjection(geojson.properties.projection, geojson.properties.extent);
-    } else {
-        challengeProjection = ol.proj.get('EPSG:4326');
+    if (geojson.features.length === 0) {
+        alert('You filtered all questions. Please set a less restrictive filter.');
+        return;
     }
-    
+
     map.setView(new View({
         projection: challengeProjection,
-        center: ol.extent.getCenter(challengeProjection.getExtent()),
-        zoom: 2,
-        extent: regionFilter ? regionFilter.getExtent() : challengeProjection.getExtent(),
-        showFullExtent: true
+        extent: featuresExtent,
+        constrainOnlyCenter: true,
+        showFullExtent: true,
+        rotation: 0,
+        enableRotation: false,
+        padding: [20, 20, 20, 20]
     }));
-    map.getView().fit(challengeProjection.getExtent());
     
     const totalErrorOutput = document.querySelector('#total-error');
     totalErrorOutput.innerText = totalError + 'km';
     const whereIs = document.querySelector('#where-is');
-    whereIs.innerHTML = `Where is ${getName(geojson.features[iChallenge].properties)}?`;
+    whereIs.innerHTML = `(${iChallenge+1}/${geojson.features.length}) Where is ${getName(geojson.features[iChallenge].properties)}?`;
+    
+    map.updateSize();
+    map.getView().fit(featuresExtent, {
+        padding: [20, 20, 20, 20]
+    });
     
     clickListener = map.on('click', (e) => {
         const correctFeature = geoJsonReader.readFeature(geojson.features[iChallenge]);

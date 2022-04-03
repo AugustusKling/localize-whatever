@@ -164,9 +164,6 @@ async function restart() {
     if (!geojson.properties.name) {
         geojson.properties.name = url;
     }
-    if (!geojson.properties.allowedError) {
-        geojson.properties.allowedError = 0;
-    }
     
     console.log(`${geojson.properties.name} has ${geojson.features.length} challenges.`);
     let regionFilter = undefined;
@@ -197,8 +194,8 @@ async function restart() {
     }));
     map.getView().fit(challengeProjection.getExtent());
     
-    const remainingOutput = document.querySelector('#remaining');
-    remainingOutput.innerText = (geojson.properties.allowedError - totalError) + 'km';
+    const totalErrorOutput = document.querySelector('#total-error');
+    totalErrorOutput.innerText = totalError + 'km';
     const whereIs = document.querySelector('#where-is');
     whereIs.innerHTML = `Where is ${getName(geojson.features[iChallenge].properties)}?`;
     
@@ -227,7 +224,7 @@ async function restart() {
             
             totalError = totalError + distance;
             
-            remainingOutput.innerText = (geojson.properties.allowedError - totalError/1000).toFixed(0) + 'km';
+            totalErrorOutput.innerText = (totalError/1000).toFixed(0) + 'km';
             
             map.getView().fit(ol.extent.extend(
                 map.getView().calculateExtent(),

@@ -5,19 +5,6 @@ const View = ol.View;
 const WMTS = ol.tilegrid.WMTS;
 const XYZ = ol.source.XYZ;
 
-proj4.defs(
-  'EPSG:3413',
-  '+proj=stere +lat_0=90 +lat_ts=70 +lon_0=-45 +k=1 ' +
-    '+x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs'
-);
-
-
-ol.proj.proj4.register(proj4);
-
-const proj3413 = ol.proj.get('EPSG:3413');
-proj3413.setExtent([-4194304, -4194304, 4194304, 4194304]);
-
-
 const blueMarble = new TileLayer({
   projection: 'EPSG:4326',
   source: new XYZ({
@@ -29,7 +16,7 @@ const blueMarble = new TileLayer({
   }),
 });
 
-const viewProj = ol.proj.get('EPSG:3413');
+const viewProj = ol.proj.get('EPSG:4326');
 
 const locationsSource = new ol.source.Vector({
     projection: 'EPSG:4326',

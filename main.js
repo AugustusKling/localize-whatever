@@ -24,6 +24,8 @@ const locationsSource = new ol.source.Vector({
 });
 const locationsLayer = new ol.layer.Vector({
     source: locationsSource,
+    updateWhileAnimating: true,
+    updateWhileInteracting: true,
     style: f => {
         if(f.get('correct')) {
             const geometry = f.getGeometry();
@@ -212,10 +214,45 @@ async function restart() {
         locationsSource.addFeature(correctFeature);
         
         const clickCoordinate = map.getEventCoordinate(e.originalEvent);
+        const closestFeatureCoordinate = correctFeature.getGeometry().getClosestPoint(clickCoordinate);
+        // Check if drawing across date line gives shorter distance.
+        if (challengeProjection.canWrapX()) {
+            const worldExtent = challengeProjection.getWorldExtent();
+            const xWorldWidth = worldExtent[2] - worldExtent[0];
+            while (clickCoordinate[0] < worldExtent[0]) {
+                clickCoordinate[0] = clickCoordinate[0] + xWorldWidth;
+            }
+            while (clickCoordinate[0] > worldExtent[2]) {
+                clickCoordinate[0] = clickCoordinate[0] - xWorldWidth;
+            }
+            let bestClickCoordinateX = clickCoordinate[0];
+            let bestErrorLineLength = new ol.geom.LineString([
+                clickCoordinate,
+                closestFeatureCoordinate
+            ]).getLength();
+            
+            const errorLineLeftWorld = new ol.geom.LineString([
+                [clickCoordinate[0] - xWorldWidth, clickCoordinate[1]],
+                closestFeatureCoordinate
+            ]);
+            if (errorLineLeftWorld.getLength() < bestErrorLineLength) {
+                bestClickCoordinateX = clickCoordinate[0] - xWorldWidth;
+                bestErrorLineLength = errorLineLeftWorld.getLength();
+            }
+            
+            const errorLineRightWorld = new ol.geom.LineString([
+                [clickCoordinate[0] + xWorldWidth, clickCoordinate[1]],
+                closestFeatureCoordinate
+            ]);
+            if (errorLineRightWorld.getLength() < bestErrorLineLength) {
+                bestClickCoordinateX = clickCoordinate[0] + xWorldWidth;
+            }
+            clickCoordinate[0] = bestClickCoordinateX;
+        }
         if (!correctFeature.getGeometry().intersectsCoordinate(clickCoordinate)) {
             const errorLine = new ol.geom.LineString([
                 clickCoordinate,
-                correctFeature.getGeometry().getClosestPoint(clickCoordinate)
+                closestFeatureCoordinate
             ]);
             const clickFeature = new ol.Feature(errorLine);
             clickFeature.set('name', correctFeature.get('name'));
@@ -231,10 +268,11 @@ async function restart() {
             
             totalErrorOutput.innerText = (totalError/1000).toFixed(0) + 'km';
             
+            map.getView().cancelAnimations();
             map.getView().fit(ol.extent.extend(
                 map.getView().calculateExtent(),
                 errorLine.getExtent()
-            ));
+            ), { duration: 500 });
         }
         
         if(iChallenge < geojson.features.length -1 ){

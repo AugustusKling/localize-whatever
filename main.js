@@ -103,7 +103,11 @@ const map = new Map({
   view: new View({
     projection: viewProj,
     center: ol.extent.getCenter(viewProj.getExtent()),
-    zoom: 2
+    zoom: 2,
+    minZoom: 2,
+    maxZoom: 10,
+    rotation: 0,
+    enableRotation: false
   }),
 });
 
@@ -163,7 +167,11 @@ async function restart() {
     console.log(`${geojson.properties.name} has ${geojson.features.length} challenges.`);
     let regionFilter = undefined;
     if (region !== '') {
-        regionFilter = geoJsonReader.readGeometry(region);
+        if (region === 'view') {
+            regionFilter = ol.geom.Polygon.fromExtent(map.getView().calculateExtent()).transform(map.getView().getProjection(), 'EPSG:4326');
+        } else {
+            regionFilter = geoJsonReader.readGeometry(region);
+        }
         geojson.features = geojson.features.filter(f => {
             const featureGeometry = geoJsonReader.readGeometry(f.geometry);
             return regionFilter.intersectsCoordinate(ol.extent.getCenter(featureGeometry.getExtent()));
@@ -188,9 +196,10 @@ async function restart() {
 
     map.setView(new View({
         projection: challengeProjection,
-        extent: featuresExtent,
         constrainOnlyCenter: true,
         showFullExtent: true,
+        minZoom: 2,
+        maxZoom: 10,
         rotation: 0,
         enableRotation: false,
         padding: [20, 20, 20, 20]
@@ -277,7 +286,7 @@ async function restart() {
         
         if(iChallenge < geojson.features.length -1 ){
             iChallenge = iChallenge + 1;
-            whereIs.innerHTML = `Where is ${getName(geojson.features[iChallenge].properties)}?`;
+            whereIs.innerHTML = `(${iChallenge+1}/${geojson.features.length}) Where is ${getName(geojson.features[iChallenge].properties)}?`;
         } else {
             console.log('done');
             whereIs.innerHTML = '';

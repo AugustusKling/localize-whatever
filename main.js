@@ -135,6 +135,56 @@ function getName(properties) {
     return properties.name || properties.NAME_ENGL || properties.RIVER_MAP;
 }
 
+function getRegionFilterFromView() {
+    const viewPoly = ol.geom.Polygon.fromExtent(map.getView().calculateExtent()).transform(map.getView().getProjection(), 'EPSG:4326');
+    const viewPolyExtent = viewPoly.getExtent();
+    if (ol.extent.getWidth(viewPolyExtent) > 359) {
+        return [viewPoly];
+    }
+    
+    const leftEdge = viewPolyExtent[0];
+    const leftEdgeMoves = Math.floor(Math.abs(leftEdge)/180);
+    const leftEdgeInWorld = viewPoly.clone();
+    leftEdgeInWorld.translate(-360 * Math.sign(leftEdge)*leftEdgeMoves, 0);
+    
+    const rightEdge = viewPolyExtent[2];
+    const rightEdgeMoves = Math.floor(Math.abs(rightEdge)/180);
+    viewPoly.translate(-360 * Math.sign(rightEdge)*rightEdgeMoves, 0);
+    
+    return [leftEdgeInWorld, viewPoly];
+}
+
+function extendWithWrapping(challengeProjection, extent, featuresExtentWrapped, geometry) {
+    const projectionHalfWidth = challengeProjection.getExtent()[2];
+    
+    const flatCoordinates = geometry.getFlatCoordinates();
+    const stride = geometry.getStride();
+    for(let i = 0; i <= flatCoordinates.length - stride; i = i + stride) {
+        const c0 = flatCoordinates[i];
+        const c1 = flatCoordinates[i + 1];
+        ol.extent.extendCoordinate(extent, [c0, c1]);
+
+        ol.extent.extendCoordinate(featuresExtentWrapped, ol.coordinate.wrapX([
+            c0 + projectionHalfWidth,
+            c1
+        ], challengeProjection));
+    }
+}
+
+function pickExtent(challengeProjection, featuresExtent, featuresExtentWrapped) {
+    if (!challengeProjection.canWrapX() || ol.extent.getWidth(featuresExtent) <= ol.extent.getWidth(featuresExtentWrapped)) {
+        return featuresExtent;
+    } else {
+        const projectionHalfWidth = challengeProjection.getExtent()[2];
+        return [
+            featuresExtentWrapped[0] - projectionHalfWidth,
+            featuresExtentWrapped[1],
+            featuresExtentWrapped[2] - projectionHalfWidth,
+            featuresExtentWrapped[3]
+        ];
+    }
+}
+
 let iChallenge = 0;
 let totalError = 0;
 let clickListener;
@@ -165,25 +215,31 @@ async function restart() {
     }
     
     console.log(`${geojson.properties.name} has ${geojson.features.length} challenges.`);
-    let regionFilter = undefined;
+    let regionFilter = [];
     if (region !== '') {
         if (region === 'view') {
-            regionFilter = ol.geom.Polygon.fromExtent(map.getView().calculateExtent()).transform(map.getView().getProjection(), 'EPSG:4326');
+            regionFilter = getRegionFilterFromView();
         } else {
-            regionFilter = geoJsonReader.readGeometry(region);
+            regionFilter = [geoJsonReader.readGeometry(region)];
         }
         geojson.features = geojson.features.filter(f => {
             const featureGeometry = geoJsonReader.readGeometry(f.geometry);
-            return regionFilter.intersectsCoordinate(ol.extent.getCenter(featureGeometry.getExtent()));
+            const featureCenter = ol.extent.getCenter(featureGeometry.getExtent());
+            return regionFilter.some(r => r.intersectsCoordinate(featureCenter));
         });
     }
     geojson.features = geojson.features.filter(f => getName(f.properties));
     
     const featuresExtent = ol.extent.createEmpty();
+    const featuresExtentWrapped = ol.extent.createEmpty();
     geojson.features.forEach(f => {
         const featureGeometry = geoJsonReader.readGeometry(f.geometry);
         featureGeometry.transform('EPSG:4326', challengeProjection);
-        ol.extent.extend(featuresExtent, featureGeometry.getExtent())
+        if (challengeProjection.canWrapX()) {
+            extendWithWrapping(challengeProjection, featuresExtent, featuresExtentWrapped, featureGeometry);
+        } else {
+            ol.extent.extend(featuresExtent, featureGeometry.getExtent());
+        }
     });
     
     shuffleArray(geojson.features);
@@ -193,6 +249,12 @@ async function restart() {
         alert('You filtered all questions. Please set a less restrictive filter.');
         return;
     }
+    
+    const totalErrorOutput = document.querySelector('#total-error');
+    totalErrorOutput.innerText = totalError + 'km';
+    const whereIs = document.querySelector('#where-is');
+    whereIs.innerHTML = `(${iChallenge+1}/${geojson.features.length}) Where is ${getName(geojson.features[iChallenge].properties)}?`;
+    map.updateSize();
 
     map.setView(new View({
         projection: challengeProjection,
@@ -204,14 +266,7 @@ async function restart() {
         enableRotation: false,
         padding: [20, 20, 20, 20]
     }));
-    
-    const totalErrorOutput = document.querySelector('#total-error');
-    totalErrorOutput.innerText = totalError + 'km';
-    const whereIs = document.querySelector('#where-is');
-    whereIs.innerHTML = `(${iChallenge+1}/${geojson.features.length}) Where is ${getName(geojson.features[iChallenge].properties)}?`;
-    
-    map.updateSize();
-    map.getView().fit(featuresExtent, {
+    map.getView().fit(pickExtent(challengeProjection, featuresExtent, featuresExtentWrapped), {
         padding: [20, 20, 20, 20]
     });
     
@@ -278,10 +333,19 @@ async function restart() {
             totalErrorOutput.innerText = (totalError/1000).toFixed(0) + 'km';
             
             map.getView().cancelAnimations();
-            map.getView().fit(ol.extent.extend(
-                map.getView().calculateExtent(),
-                errorLine.getExtent()
-            ), { duration: 500 });
+            let newViewExtent;
+            if (challengeProjection.canWrapX()) {
+                const updateViewExtent = map.getView().calculateExtent();
+                const updateViewExtentWrapped = [...updateViewExtent];
+                updateViewExtentWrapped[0] = updateViewExtentWrapped[0] + 180;
+                updateViewExtentWrapped[2] = updateViewExtentWrapped[2] + 180;
+                extendWithWrapping(challengeProjection, updateViewExtent, updateViewExtentWrapped, correctFeature.getGeometry());
+                newViewExtent = pickExtent(challengeProjection, updateViewExtent, updateViewExtentWrapped);
+            } else {
+                newViewExtent = map.getView().calculateExtent();
+                ol.extent.extend(newViewExtent, correctFeature.getGeometry().getExtent());
+            }
+            map.getView().fit(newViewExtent, { duration: 500 });
         }
         
         if(iChallenge < geojson.features.length -1 ){
